@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
+import jsQR from 'jsqr';
 import { validateToken, type ValidationResult } from '../lib/crypto';
 
 export default function CustomerScanner() {
@@ -8,89 +8,114 @@ export default function CustomerScanner() {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animFrameRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
 
-  const startScanner = async () => {
-    setError(null);
-    setPermissionDenied(false);
-
-    try {
-      const scanner = new Html5Qrcode('qr-reader');
-      scannerRef.current = scanner;
-
-      const config = { fps: 10, qrbox: { width: 240, height: 240 } };
-      const onSuccess = (decodedText: string) => {
-        if (isProcessingRef.current) return;
-        isProcessingRef.current = true;
-
-        const result: ValidationResult = validateToken(decodedText);
-        scanner.stop().catch(() => {});
-
-        const params = new URLSearchParams();
-        params.set('valid', result.valid ? '1' : '0');
-        params.set('reason', result.reason);
-        if (result.payload) {
-          params.set('merchantName', result.payload.merchantName);
-          params.set('merchantId', result.payload.merchantId);
-          params.set('pjsp', result.payload.pjsp);
-          params.set('expiry', String(result.payload.expiry));
-          params.set('scannedAt', String(result.scannedAt ?? Date.now()));
-        }
-
-        navigate(`/result?${params.toString()}`);
-      };
-      const onError = () => { /* ignore per-frame errors */ };
-
-      try {
-        // Try exact environment first
-        await scanner.start({ facingMode: { exact: 'environment' } }, config, onSuccess, onError);
-      } catch (e1) {
-        try {
-          // Fallback to environment
-          await scanner.start({ facingMode: 'environment' }, config, onSuccess, onError);
-        } catch (e2) {
-          // Fallback to explicit camera list
-          const devices = await Html5Qrcode.getCameras();
-          if (devices && devices.length > 0) {
-            // Try to find a camera with "back" or "environment" in label
-            let backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
-            if (!backCamera) backCamera = devices[devices.length - 1]; // usually last is back
-            
-            await scanner.start(backCamera.id, config, onSuccess, onError);
-          } else {
-            throw new Error('No cameras found.');
-          }
-        }
-      }
-
-      setScanning(true);
-    } catch (err: unknown) {
-      const msg = (err as Error).message ?? String(err);
-      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('notallowed')) {
-        setPermissionDenied(true);
-      } else {
-        setError(`Cannot access camera. ${msg}`);
-      }
+  const stopScanner = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
     }
-  };
-
-
-  const stopScanner = async () => {
-    if (scannerRef.current) {
-      try { await scannerRef.current.stop(); } catch { /* ignore */ }
-      scannerRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setScanning(false);
     isProcessingRef.current = false;
-  };
-
-  useEffect(() => {
-    return () => { stopScanner(); };
   }, []);
 
+  const tick = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      animFrameRef.current = requestAnimationFrame(tick);
+      return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'dontInvert',
+    });
+
+    if (code && !isProcessingRef.current) {
+      isProcessingRef.current = true;
+      stopScanner();
+
+      const result: ValidationResult = validateToken(code.data);
+      const params = new URLSearchParams();
+      params.set('valid', result.valid ? '1' : '0');
+      params.set('reason', result.reason);
+      if (result.payload) {
+        params.set('merchantName', result.payload.merchantName);
+        params.set('merchantId', result.payload.merchantId);
+        params.set('pjsp', result.payload.pjsp);
+        params.set('expiry', String(result.payload.expiry));
+        params.set('scannedAt', String(result.scannedAt ?? Date.now()));
+      }
+      navigate(`/result?${params.toString()}`);
+      return;
+    }
+
+    animFrameRef.current = requestAnimationFrame(tick);
+  }, [navigate, stopScanner]);
+
+  const startScanner = useCallback(async () => {
+    setError(null);
+    setPermissionDenied(false);
+    isProcessingRef.current = false;
+
+    const constraints: MediaStreamConstraints = {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      const video = videoRef.current!;
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true'); // required on iOS Safari
+      await video.play();
+
+      setScanning(true);
+      animFrameRef.current = requestAnimationFrame(tick);
+    } catch (err: unknown) {
+      const e = err as DOMException;
+      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+        setPermissionDenied(true);
+      } else if (e.name === 'NotFoundError') {
+        setError('No camera found on this device.');
+      } else {
+        setError(`Camera error: ${e.message || e.name}`);
+      }
+    }
+  }, [tick]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { stopScanner(); };
+  }, [stopScanner]);
+
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#000000' }}>
+    <div className="min-h-screen flex flex-col bg-black">
 
       {/* Top Bar */}
       <header className="absolute top-0 left-0 right-0 z-30 flex justify-between items-center px-4 py-3">
@@ -112,22 +137,32 @@ export default function CustomerScanner() {
         </div>
       </header>
 
-      {/* Camera / Scanner Area */}
-      <div className="relative flex-1 flex flex-col items-center justify-center overflow-hidden">
-        {/* Hidden scanner div */}
-        <div id="qr-reader" className="absolute inset-0 z-0 w-full h-full [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
+      {/* Camera Area — fills available space */}
+      <div className="relative flex-1" style={{ minHeight: 0 }}>
 
-        {/* Camera background overlay */}
+        {/* Live camera feed — always mounted, hidden when not scanning */}
+        <video
+          ref={videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          playsInline
+          muted
+          style={{ display: scanning ? 'block' : 'none' }}
+        />
+
+        {/* Hidden canvas used for QR analysis — never visible */}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Background shown when camera is off */}
         {!scanning && (
-          <div className="absolute inset-0 z-0"
+          <div className="absolute inset-0"
             style={{ background: 'linear-gradient(180deg, #111827 0%, #1f2937 100%)' }} />
         )}
 
-        {/* Viewfinder overlay */}
-        <div className="relative z-10 flex flex-col items-center gap-6">
+        {/* Viewfinder overlay — sits on top of video */}
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 pointer-events-none">
 
           {/* Scanner Frame */}
-          <div className="relative w-64 h-64" style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.65)' }}>
+          <div className="relative w-64 h-64" style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)' }}>
 
             {/* Corner Brackets */}
             {[
@@ -148,7 +183,7 @@ export default function CustomerScanner() {
               />
             )}
 
-            {/* Center content when not scanning */}
+            {/* Placeholder icon when not scanning */}
             {!scanning && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                 <div className="w-16 h-16 rounded-full flex items-center justify-center"
@@ -164,19 +199,21 @@ export default function CustomerScanner() {
             {scanning ? 'Point at the merchant\'s QR Code' : 'Press the button below to start scanning'}
           </p>
 
-          {permissionDenied && (
-            <div className="mx-4 rounded-xl p-3 text-center text-sm"
-              style={{ background: 'rgba(186,26,26,0.85)', color: '#fff' }}>
-              ⛔ Camera permission denied. Please allow camera access in your browser settings.
-            </div>
-          )}
-
-          {error && (
-            <div className="mx-4 rounded-xl p-3 text-center text-sm"
-              style={{ background: 'rgba(134,84,0,0.85)', color: '#fff' }}>
-              ⚠️ {error}
-            </div>
-          )}
+          {/* Errors — pointer-events-auto so they're tappable if needed */}
+          <div className="pointer-events-auto flex flex-col gap-2 px-4 w-full items-center">
+            {permissionDenied && (
+              <div className="rounded-xl p-3 text-center text-sm w-full max-w-xs"
+                style={{ background: 'rgba(186,26,26,0.85)', color: '#fff' }}>
+                ⛔ Camera permission denied. Please allow camera access in your browser settings.
+              </div>
+            )}
+            {error && (
+              <div className="rounded-xl p-3 text-center text-sm w-full max-w-xs"
+                style={{ background: 'rgba(134,84,0,0.85)', color: '#fff' }}>
+                ⚠️ {error}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
