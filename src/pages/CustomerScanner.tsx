@@ -19,42 +19,62 @@ export default function CustomerScanner() {
       const scanner = new Html5Qrcode('qr-reader');
       scannerRef.current = scanner;
 
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-          if (isProcessingRef.current) return;
-          isProcessingRef.current = true;
+      const config = { fps: 10, qrbox: { width: 240, height: 240 } };
+      const onSuccess = (decodedText: string) => {
+        if (isProcessingRef.current) return;
+        isProcessingRef.current = true;
 
-          const result: ValidationResult = validateToken(decodedText);
-          scanner.stop().catch(() => {});
+        const result: ValidationResult = validateToken(decodedText);
+        scanner.stop().catch(() => {});
 
-          const params = new URLSearchParams();
-          params.set('valid', result.valid ? '1' : '0');
-          params.set('reason', result.reason);
-          if (result.payload) {
-            params.set('merchantName', result.payload.merchantName);
-            params.set('merchantId', result.payload.merchantId);
-            params.set('pjsp', result.payload.pjsp);
-            params.set('expiry', String(result.payload.expiry));
-            params.set('scannedAt', String(result.scannedAt ?? Date.now()));
+        const params = new URLSearchParams();
+        params.set('valid', result.valid ? '1' : '0');
+        params.set('reason', result.reason);
+        if (result.payload) {
+          params.set('merchantName', result.payload.merchantName);
+          params.set('merchantId', result.payload.merchantId);
+          params.set('pjsp', result.payload.pjsp);
+          params.set('expiry', String(result.payload.expiry));
+          params.set('scannedAt', String(result.scannedAt ?? Date.now()));
+        }
+
+        navigate(`/result?${params.toString()}`);
+      };
+      const onError = () => { /* ignore per-frame errors */ };
+
+      try {
+        // Try exact environment first
+        await scanner.start({ facingMode: { exact: 'environment' } }, config, onSuccess, onError);
+      } catch (e1) {
+        try {
+          // Fallback to environment
+          await scanner.start({ facingMode: 'environment' }, config, onSuccess, onError);
+        } catch (e2) {
+          // Fallback to explicit camera list
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            // Try to find a camera with "back" or "environment" in label
+            let backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+            if (!backCamera) backCamera = devices[devices.length - 1]; // usually last is back
+            
+            await scanner.start(backCamera.id, config, onSuccess, onError);
+          } else {
+            throw new Error('No cameras found.');
           }
-
-          navigate(`/result?${params.toString()}`);
-        },
-        () => { /* ignore per-frame errors */ }
-      );
+        }
+      }
 
       setScanning(true);
     } catch (err: unknown) {
-      const msg = (err as Error).message ?? '';
-      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied')) {
+      const msg = (err as Error).message ?? String(err);
+      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('notallowed')) {
         setPermissionDenied(true);
       } else {
-        setError('Cannot access camera. Ensure your browser supports it and permissions are granted.');
+        setError(`Cannot access camera. ${msg}`);
       }
     }
   };
+
 
   const stopScanner = async () => {
     if (scannerRef.current) {
