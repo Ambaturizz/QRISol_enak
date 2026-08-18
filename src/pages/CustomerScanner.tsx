@@ -115,7 +115,7 @@ export default function CustomerScanner() {
       {/* Camera / Scanner Area */}
       <div className="relative flex-1 flex flex-col items-center justify-center overflow-hidden">
         {/* Hidden scanner div */}
-        <div id="qr-reader" className="absolute inset-0 z-0" />
+        <div id="qr-reader" className="absolute inset-0 z-0 w-full h-full [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
 
         {/* Camera background overlay */}
         {!scanning && (
