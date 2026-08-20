@@ -3,6 +3,7 @@ import HomePage from './pages/HomePage';
 import MerchantDashboard from './pages/MerchantDashboard';
 import CustomerScanner from './pages/CustomerScanner';
 import ResultPage from './pages/ResultPage';
+import SimulationPage from './pages/SimulationPage';
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
         <Route path="/merchant" element={<MerchantDashboard />} />
         <Route path="/scanner" element={<CustomerScanner />} />
         <Route path="/result" element={<ResultPage />} />
+        <Route path="/simulation" element={<SimulationPage />} />
       </Routes>
     </BrowserRouter>
   );

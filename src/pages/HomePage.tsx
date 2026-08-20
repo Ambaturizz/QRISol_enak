@@ -27,6 +27,11 @@ export default function HomePage() {
               style={{ background: '#002068' }}>
               Scanner App
             </Link>
+            <Link to="/simulation"
+              className="text-sm font-semibold px-4 py-2 rounded-lg text-white transition-all active:scale-95 hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg,#4f8ef7,#7c5cf7)' }}>
+              🔐 Simulation
+            </Link>
           </div>
         </div>
       </header>
@@ -59,6 +64,11 @@ export default function HomePage() {
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-base transition-all active:scale-95 hover:bg-white border"
               style={{ borderColor: '#c4c5d5', color: '#444653' }}>
               📱 Try Scanner App
+            </Link>
+            <Link to="/simulation"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-base transition-all active:scale-95 hover:opacity-90 shadow-sm"
+              style={{ background: 'linear-gradient(135deg, #4f8ef7, #7c5cf7)' }}>
+              🔐 Security Simulation
             </Link>
           </div>
         </section>
@@ -260,6 +270,11 @@ export default function HomePage() {
                   className="px-6 py-3 rounded-xl font-semibold text-sm border transition-all active:scale-95 hover:bg-white/10"
                   style={{ borderColor: 'rgba(255,255,255,0.3)', color: '#ffffff' }}>
                   📱 Open Scanner App
+                </Link>
+                <Link to="/simulation"
+                  className="px-6 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg,#4f8ef7,#7c5cf7)', color: '#ffffff' }}>
+                  🔐 Security Simulation
                 </Link>
               </div>
             </div>
